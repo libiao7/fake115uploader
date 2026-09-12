@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/eiannone/keyboard"
 	"github.com/orzogc/fake115uploader/cipher"
 	"github.com/valyala/fastjson"
 )
@@ -117,62 +115,63 @@ func getTime() string {
 	return fmt.Sprintf("%d-%02d-%02d %02d-%02d-%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
-// 处理输入
-func getInput(ctx context.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Printf("getInput() error: %v", err)
-		}
-	}()
+// // 处理输入
+// func getInput(ctx context.Context) {
+// 	defer func() {
+// 		if err := recover(); err != nil {
+// 			log.Printf("getInput() error: %v", err)
+// 		}
+// 	}()
 
-	eventCh, err := keyboard.GetKeys(10)
-	checkErr(err)
+// 	eventCh, err := keyboard.GetKeys(10)
+// 	checkErr(err)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event := <-eventCh:
-			checkErr(event.Err)
-			if string(event.Rune) == "q" || string(event.Rune) == "Q" || event.Key == keyboard.KeyCtrlC {
-				quit <- struct{}{}
-				return
-			}
-		}
-	}
-}
+// 	for {
+// 		select {
+// 		case <-ctx.Done():
+// 			return
+// 		case event := <-eventCh:
+// 			checkErr(event.Err)
+// 			if string(event.Rune) == "q" || string(event.Rune) == "Q" || event.Key == keyboard.KeyCtrlC {
+// 				quit <- struct{}{}
+// 				return
+// 			}
+// 		}
+// 	}
+// }
 
-func closeKeybord() {
-	ch := make(chan struct{}, 1)
-	defer close(ch)
+// func closeKeybord() {
+// 	ch := make(chan struct{}, 1)
+// 	defer close(ch)
 
-	go func() {
-		err := keyboard.Close()
-		if err != nil {
-			log.Printf("关闭 keyboard 出现错误：%v", err)
-		}
+// 	go func() {
+// 		err := keyboard.Close()
+// 		if err != nil {
+// 			log.Printf("关闭 keyboard 出现错误：%v", err)
+// 		}
 
-		ch <- struct{}{}
-	}()
+// 		ch <- struct{}{}
+// 	}()
 
-	select {
-	case <-ch:
-		return
-	case <-time.After(5 * time.Second):
-		log.Println("关闭 keyboard 超时，强制退出")
-		os.Exit(1)
-	}
-}
+// 	select {
+// 	case <-ch:
+// 		return
+// 	case <-time.After(5 * time.Second):
+// 		log.Println("关闭 keyboard 超时，强制退出")
+// 		os.Exit(1)
+// 	}
+// }
 
 // 退出处理
 func handleQuit() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
-	select {
-	case <-ch:
-	case <-quit:
-	}
+	// select {
+	// case <-ch:
+	// case <-quit:
+	// }
+	<-ch
 
 	signal.Stop(ch)
 	signal.Reset(os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -184,7 +183,7 @@ func handleQuit() {
 		<-multipartCh
 	}
 
-	closeKeybord()
+	// closeKeybord()
 	exitPrint()
 	if len(result.Failed) != 0 {
 		os.Exit(1)
@@ -589,10 +588,10 @@ func main() {
 	err := initialize()
 	checkErr(err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go getInput(ctx)
-	defer closeKeybord()
+	// ctx, cancel := context.WithCancel(context.Background())
+	// defer cancel()
+	// go getInput(ctx)
+	// defer closeKeybord()
 
 	defer exitPrint()
 
