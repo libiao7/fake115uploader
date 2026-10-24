@@ -144,7 +144,7 @@ func multipartUploadFile(ft *fastToken, file string, sp *saveProgress) (e error)
 		checkErr(err)
 	}
 
-	fmt.Println("按 q 键停止上传并退出程序，断点续传模式会自动保存上传进度")
+	fmt.Println("按 CTRL+C 键停止上传并退出程序，断点续传模式会自动保存上传进度")
 	bar = pb.New64(info.Size()).SetTemplate(pb.Full).Set(pb.Bytes, true)
 	if sp != nil {
 		bar.SetCurrent(int64(len(sp.Parts)) * sp.Chunks[0].Size)

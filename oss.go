@@ -191,7 +191,7 @@ func ossUploadFile(ft *fastToken, file string) (e error) {
 		oss.Progress(&ossProgressListener{}),
 	}
 
-	fmt.Println("按 q 键停止上传并退出程序")
+	fmt.Println("按 CTRL+C 键停止上传并退出程序")
 	err = bucket.PutObjectFromFile(ft.Object, file, options...)
 	checkErr(err)
 
