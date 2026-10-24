@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -49,6 +50,7 @@ const (
 
 var (
 	fastUpload      *bool
+	archiveMode     *bool
 	upload          *bool
 	multipartUpload *bool
 	configFile      *string
@@ -68,6 +70,8 @@ var (
 	proxyHost       string
 	proxyUser       string
 	proxyPassword   string
+	archivePassword string
+	sevenZipPath    string
 	httpClient      = &http.Client{Timeout: 30 * time.Second}
 	ecdhCipher      *cipher.EcdhCipher
 )
@@ -98,8 +102,9 @@ type resultData struct {
 
 // 要上传的文件的信息
 type fileInfo struct {
-	Path     string `json:"path"`     // 文件路径
-	ParentID uint64 `json:"parentID"` // 要上传到的文件夹的 cid
+	Path     string        `json:"path"`     // 文件路径
+	ParentID uint64        `json:"parentID"` // 要上传到的文件夹的 cid
+	Archive  *archiveEntry `json:"-"`        // 非 nil 时，Path 指向压缩包内的文件
 }
 
 // 检查错误
@@ -413,6 +418,7 @@ func initialize() (e error) {
 	}()
 
 	fastUpload = flag.Bool("f", false, "秒传模式上传`文件`")
+	archiveMode = flag.Bool("archive", false, "将输入的压缩包视为文件夹，秒传其中的文件（需要 7-Zip；只能与 -f 一起使用）")
 	upload = flag.Bool("u", false, "先尝试用秒传模式上传`文件`，失败后改用普通模式上传")
 	multipartUpload = flag.Bool("m", false, "先尝试用秒传模式上传`文件`，失败后改用断点续传模式上传，可以随时中断上传再重启上传（适合用于上传超大文件，注意暂停上传的时间不要太长）")
 	configFile = flag.String("l", "", "指定设置`文件`（json 格式），默认是程序所在的文件夹里的 fake115uploader.json")
@@ -461,6 +467,14 @@ func initialize() (e error) {
 	}
 	if (*fastUpload && *upload) || (*fastUpload && *multipartUpload) || (*upload && *multipartUpload) {
 		log.Println("-f、-u 和-m 这三个参数只能同时使用其中一个")
+		os.Exit(1)
+	}
+	if *archiveMode && (!*fastUpload || *upload || *multipartUpload) {
+		log.Println("-archive 只能与 -f 秒传模式一起使用")
+		os.Exit(1)
+	}
+	if *archiveMode && (*recursive || *removeFile) {
+		log.Println("-archive 不能与 -recursive 或 -e 一起使用")
 		os.Exit(1)
 	}
 
@@ -587,6 +601,16 @@ func main() {
 
 	err := initialize()
 	checkErr(err)
+	if *archiveMode {
+		sevenZipPath, err = find7Zip()
+		checkErr(err)
+		fmt.Print("输入压缩包密码（无密码直接回车）：")
+		line, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			checkErr(readErr)
+		}
+		archivePassword = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	}
 
 	// ctx, cancel := context.WithCancel(context.Background())
 	// defer cancel()
@@ -599,6 +623,23 @@ func main() {
 	cidMap := make(map[string]uint64)
 	for _, file := range flag.Args() {
 		file = filepath.Clean(file)
+		if *archiveMode {
+			entries, err := listArchive(file, archivePassword, sevenZipPath)
+			if err != nil {
+				log.Printf("读取压缩包 %s 失败：%v", file, err)
+				result.Failed = append(result.Failed, failedFile{Path: file, CID: config.CID})
+				continue
+			}
+			for i := range entries {
+				entry := entries[i]
+				files = append(files, fileInfo{
+					Path:     file + "::" + entry.entryPath,
+					ParentID: config.CID,
+					Archive:  &entry,
+				})
+			}
+			continue
+		}
 		info, err := os.Stat(file)
 		if err != nil {
 			log.Printf("获取 %s 的信息出现错误：%v", file, err)

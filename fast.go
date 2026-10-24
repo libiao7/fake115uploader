@@ -132,6 +132,9 @@ func (file *fileInfo) uploadFileSHA1() (body []byte, fileSHA1 string, e error) {
 			e = fmt.Errorf("uploadFileSHA1() error: %v", err)
 		}
 	}()
+	if file.Archive != nil {
+		return file.uploadArchiveFileSHA1()
+	}
 
 	f, err := os.Open(file.Path)
 	checkErr(err)
