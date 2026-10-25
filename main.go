@@ -627,17 +627,46 @@ func main() {
 			entries, err := listArchive(file, archivePassword, sevenZipPath)
 			if err != nil {
 				log.Printf("读取压缩包 %s 失败：%v", file, err)
-				result.Failed = append(result.Failed, failedFile{Path: file, CID: config.CID})
+				result.Failed = append(
+					result.Failed,
+					failedFile{Path: file, CID: config.CID},
+				)
 				continue
 			}
+
+			// 不同压缩包分别缓存，避免重复创建目录。
+			archiveDirs := make(map[string]uint64)
+
 			for i := range entries {
 				entry := entries[i]
+
+				parentID, err := ensureArchiveParentDir(
+					entry.entryPath,
+					config.CID,
+					archiveDirs,
+				)
+				if err != nil {
+					log.Printf(
+						"处理压缩包 %s 内的文件 %s 失败：%v",
+						file, entry.entryPath, err,
+					)
+					result.Failed = append(
+						result.Failed,
+						failedFile{
+							Path: file + "::" + entry.entryPath,
+							CID:  config.CID,
+						},
+					)
+					continue
+				}
+
 				files = append(files, fileInfo{
 					Path:     file + "::" + entry.entryPath,
-					ParentID: config.CID,
+					ParentID: parentID,
 					Archive:  &entry,
 				})
 			}
+
 			continue
 		}
 		info, err := os.Stat(file)

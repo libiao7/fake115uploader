@@ -104,6 +104,71 @@ func listArchive(archivePath, password, sevenZip string) ([]archiveEntry, error)
 	return entries, nil
 }
 
+// ensureArchiveParentDir 创建或复用压缩包内文件所需的目录。
+// archiveDirs 用于缓存已经解析过的内部目录，避免重复请求 115。
+func ensureArchiveParentDir(
+	entryPath string,
+	rootCID uint64,
+	archiveDirs map[string]uint64,
+) (uint64, error) {
+	entryPath = strings.ReplaceAll(entryPath, "\\", "/")
+	entryPath = path.Clean(entryPath)
+
+	// 防止绝对路径和路径穿越。
+	if entryPath == "." ||
+		path.IsAbs(entryPath) ||
+		entryPath == ".." ||
+		strings.HasPrefix(entryPath, "../") {
+		return 0, fmt.Errorf("压缩包内部路径无效：%q", entryPath)
+	}
+
+	dir := path.Dir(entryPath)
+	if dir == "." {
+		return rootCID, nil
+	}
+
+	// 缓存以目标根目录 CID 和内部路径共同标识。
+	key := strconv.FormatUint(rootCID, 10) + "/" + dir
+	if cid, ok := archiveDirs[key]; ok {
+		return cid, nil
+	}
+
+	parentCID := rootCID
+	currentPath := ""
+
+	for _, part := range strings.Split(dir, "/") {
+		if part == "" || part == "." || part == ".." {
+			return 0, fmt.Errorf("压缩包内部目录无效：%q", dir)
+		}
+
+		if currentPath == "" {
+			currentPath = part
+		} else {
+			currentPath += "/" + part
+		}
+
+		key := strconv.FormatUint(rootCID, 10) + "/" + currentPath
+
+		if cid, ok := archiveDirs[key]; ok {
+			parentCID = cid
+			continue
+		}
+
+		cid, err := createDir(parentCID, part)
+		if err != nil {
+			return 0, fmt.Errorf(
+				"创建压缩包内部目录 %q 失败：%w",
+				currentPath, err,
+			)
+		}
+
+		archiveDirs[key] = cid
+		parentCID = cid
+	}
+
+	return parentCID, nil
+}
+
 // stream starts 7-Zip for one entry and gives the decompressed bytes to consume.
 // The callback must read until EOF; the process exit status is checked afterward.
 func (entry *archiveEntry) stream(consume func(io.Reader) error) error {
