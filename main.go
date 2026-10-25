@@ -51,6 +51,7 @@ const (
 var (
 	fastUpload      *bool
 	archiveMode     *bool
+	noConfigMode    bool
 	upload          *bool
 	multipartUpload *bool
 	configFile      *string
@@ -78,13 +79,14 @@ var (
 
 // 设置数据
 type uploadConfig struct {
-	Cookies   string `json:"cookies"`   // 115 网页版的 Cookie
-	CID       uint64 `json:"cid"`       // 115 里文件夹的 cid
-	ResultDir string `json:"resultDir"` // 在指定文件夹保存上传结果
-	HTTPRetry uint   `json:"httpRetry"` // HTTP 请求失败后的重试次数
-	HTTPProxy string `json:"httpProxy"` // HTTP 代理
-	OSSProxy  string `json:"ossProxy"`  // OSS 上传代理
-	PartsNum  uint   `json:"partsNum"`  // 断点续传的分片数量
+	Cookies          string   `json:"cookies"`                    // 115 网页版的 Cookie
+	CID              uint64   `json:"cid"`                        // 115 里文件夹的 cid
+	ResultDir        string   `json:"resultDir"`                  // 在指定文件夹保存上传结果
+	HTTPRetry        uint     `json:"httpRetry"`                  // HTTP 请求失败后的重试次数
+	HTTPProxy        string   `json:"httpProxy"`                  // HTTP 代理
+	OSSProxy         string   `json:"ossProxy"`                   // OSS 上传代理
+	PartsNum         uint     `json:"partsNum"`                   // 断点续传的分片数量
+	ArchivePasswords []string `json:"archivePasswords,omitempty"` // 已验证的压缩包密码
 }
 
 // 上传失败的文件信息
@@ -409,6 +411,133 @@ func loadConfig() (e error) {
 	return nil
 }
 
+func saveArchivePassword(password string) {
+	if noConfigMode || password == "" {
+		return
+	}
+
+	for _, saved := range config.ArchivePasswords {
+		if saved == password {
+			return
+		}
+	}
+
+	config.ArchivePasswords = append(config.ArchivePasswords, password)
+
+	data, err := json.MarshalIndent(config, "", "    ")
+	if err != nil {
+		log.Printf("保存压缩包密码失败：%v", err)
+		return
+	}
+
+	if err := os.WriteFile(*configFile, data, 0644); err != nil {
+		log.Printf("保存压缩包密码到 %s 失败：%v", *configFile, err)
+		return
+	}
+
+	log.Println("已将验证成功的压缩包密码保存到设置文件")
+}
+
+// 尝试密码并读取压缩包。
+// 对加密文件实际解压并读到 EOF，利用 7-Zip 的退出状态验证密码。
+func tryArchivePassword(
+	archivePath string,
+	password string,
+) ([]archiveEntry, error) {
+	entries, err := listArchive(archivePath, password, sevenZipPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var encrypted *archiveEntry
+	for i := range entries {
+		if entries[i].encrypted {
+			encrypted = &entries[i]
+			break
+		}
+	}
+
+	// 压缩包没有加密文件，不需要密码验证。
+	if encrypted == nil {
+		return entries, nil
+	}
+
+	err = encrypted.stream(func(r io.Reader) error {
+		_, err := io.Copy(io.Discard, r)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// 优先尝试配置文件中保存的密码；失败后提示用户输入。
+func resolveArchivePassword(archivePath string) ([]archiveEntry, error) {
+	tried := make(map[string]bool)
+
+	try := func(password string) ([]archiveEntry, bool) {
+		if tried[password] {
+			return nil, false
+		}
+		tried[password] = true
+
+		entries, err := tryArchivePassword(archivePath, password)
+		if err != nil {
+			if *verbose {
+				log.Printf("尝试压缩包 %s 的一个密码失败：%v", archivePath, err)
+			}
+			return nil, false
+		}
+
+		if password != "" {
+			saveArchivePassword(password)
+		}
+		archivePassword = password
+		return entries, true
+	}
+
+	// 先尝试以前保存的密码。
+	if !noConfigMode {
+		for _, password := range config.ArchivePasswords {
+			if entries, ok := try(password); ok {
+				return entries, nil
+			}
+		}
+	}
+
+	// 再尝试空密码。
+	if entries, ok := try(""); ok {
+		return entries, nil
+	}
+
+	// 已保存的密码和空密码都失败，提示用户输入。
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("压缩包 %s 的密码不在已保存的密码中，请输入密码：", archivePath)
+
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("读取压缩包密码失败：%w", err)
+		}
+		password := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+
+		// 避免重复尝试已失败的密码。
+		if tried[password] {
+			fmt.Println("这个密码已经尝试过且失败，请输入另一个密码。")
+		} else if entries, ok := try(password); ok {
+			return entries, nil
+		} else {
+			fmt.Println("密码验证失败，请重新输入。")
+		}
+
+		if err == io.EOF {
+			return nil, fmt.Errorf("已到达输入末尾，无法继续读取密码")
+		}
+	}
+}
+
 // 程序初始化
 func initialize() (e error) {
 	defer func() {
@@ -438,6 +567,7 @@ func initialize() (e error) {
 	help := flag.Bool("h", false, "显示帮助信息")
 
 	flag.Parse()
+	noConfigMode = *noConfig
 
 	if *configFile == "" {
 		path, err := os.Executable()
@@ -604,12 +734,6 @@ func main() {
 	if *archiveMode {
 		sevenZipPath, err = find7Zip()
 		checkErr(err)
-		fmt.Print("输入压缩包密码（无密码直接回车）：")
-		line, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
-		if readErr != nil && readErr != io.EOF {
-			checkErr(readErr)
-		}
-		archivePassword = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 	}
 
 	// ctx, cancel := context.WithCancel(context.Background())
@@ -624,7 +748,7 @@ func main() {
 	for _, file := range flag.Args() {
 		file = filepath.Clean(file)
 		if *archiveMode {
-			entries, err := listArchive(file, archivePassword, sevenZipPath)
+			entries, err := resolveArchivePassword(file)
 			if err != nil {
 				log.Printf("读取压缩包 %s 失败：%v", file, err)
 				result.Failed = append(

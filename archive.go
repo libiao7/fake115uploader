@@ -24,6 +24,7 @@ type archiveEntry struct {
 	size        int64
 	password    string
 	sevenZip    string
+	encrypted   bool
 }
 
 func find7Zip() (string, error) {
@@ -75,6 +76,7 @@ func listArchive(archivePath, password, sevenZip string) ([]archiveEntry, error)
 				size:        size,
 				password:    password,
 				sevenZip:    sevenZip,
+				encrypted:   fields["Encrypted"] == "+",
 			})
 		}
 		fields = map[string]string{}
