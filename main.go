@@ -418,7 +418,7 @@ func initialize() (e error) {
 	}()
 
 	fastUpload = flag.Bool("f", false, "秒传模式上传`文件`")
-	archiveMode = flag.Bool("archive", false, "将输入的压缩包视为文件夹，秒传其中的文件（需要 7-Zip；只能与 -f 一起使用）")
+	archiveMode = flag.Bool("z", false, "将输入的压缩包视为文件夹，秒传其中的文件（需要 7-Zip；只能与 -f 一起使用）")
 	upload = flag.Bool("u", false, "先尝试用秒传模式上传`文件`，失败后改用普通模式上传")
 	multipartUpload = flag.Bool("m", false, "先尝试用秒传模式上传`文件`，失败后改用断点续传模式上传，可以随时中断上传再重启上传（适合用于上传超大文件，注意暂停上传的时间不要太长）")
 	configFile = flag.String("l", "", "指定设置`文件`（json 格式），默认是程序所在的文件夹里的 fake115uploader.json")
